@@ -1,0 +1,2241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network Topology - Interactive 3D Hierarchy HUD</title>
+  
+  <!-- MediaPipe CDN Imports -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <!-- Google Fonts for futuristic look -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg-dark: #020204;
+      --hud-accent: #00f0ff;
+      --hud-glow: rgba(0, 240, 255, 0.4);
+      --mono-bright: #ffffff;
+      --mono-muted: rgba(255, 255, 255, 0.4);
+      --mono-dim: rgba(255, 255, 255, 0.15);
+      --panel-bg: rgba(6, 6, 10, 0.85);
+      --panel-border: rgba(255, 255, 255, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Outfit', sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--mono-bright);
+      user-select: none;
+    }
+
+    #hud-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #canvas-wrapper {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+
+    #webcam-video {
+      display: none;
+    }
+
+    #hud-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Glassmorphism Panels */
+    .hud-panel {
+      position: absolute;
+      z-index: 10;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-radius: 8px;
+      padding: 20px;
+      font-family: 'Share Tech Mono', monospace;
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.7);
+      pointer-events: auto;
+    }
+
+    #panel-top {
+      top: 25px;
+      left: 25px;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      border-left: 3px solid var(--hud-accent);
+    }
+
+    #panel-top h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--mono-bright);
+    }
+
+    .path-display {
+      font-size: 13px;
+      color: var(--mono-muted);
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .path-active {
+      color: var(--hud-accent);
+      text-shadow: 0 0 8px var(--hud-glow);
+    }
+
+    #panel-right {
+      top: 25px;
+      right: 25px;
+      width: 360px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--mono-muted);
+      border-bottom: 1px solid var(--mono-dim);
+      padding-bottom: 6px;
+    }
+
+    .node-details {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .node-name-large {
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--hud-accent);
+      text-shadow: 0 0 8px var(--hud-glow);
+      text-transform: uppercase;
+    }
+
+    .node-desc {
+      font-size: 14px;
+      color: var(--mono-muted);
+      line-height: 1.65;
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      font-size: 13px;
+    }
+
+    .telemetry-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .tel-label {
+      color: var(--mono-muted);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .tel-val {
+      color: var(--mono-bright);
+    }
+
+    .tel-val.accent {
+      color: var(--hud-accent);
+      text-shadow: 0 0 8px var(--hud-glow);
+    }
+
+    #panel-bottom {
+      bottom: 25px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: auto;
+      max-width: 700px;
+      padding: 14px 28px;
+      text-align: center;
+      font-size: 14px;
+      letter-spacing: 1.5px;
+      color: var(--mono-muted);
+    }
+
+    /* ===== LEAF NODE DESCRIPTION OVERLAY ===== */
+    #leaf-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+
+    #leaf-overlay.visible {
+      opacity: 1;
+    }
+
+    #leaf-overlay-card {
+      max-width: 620px;
+      width: 78%;
+      background: rgba(0, 0, 0, 0.88);
+      padding: 48px 56px;
+      font-family: 'Share Tech Mono', monospace;
+      text-align: left;
+    }
+
+    #leaf-overlay-label {
+      display: none;
+    }
+
+    #leaf-overlay-name {
+      font-size: 22px;
+      font-weight: 400;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #ffffff;
+      margin-bottom: 22px;
+    }
+
+    #leaf-overlay-desc {
+      font-size: 16px;
+      line-height: 1.9;
+      color: rgba(255, 255, 255, 0.55);
+    }
+
+    #leaf-overlay-hint {
+      margin-top: 36px;
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.18);
+    }
+
+    /* Loader Card */
+    #loader {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background-color: var(--bg-dark);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      transition: opacity 0.8s ease, visibility 0.8s;
+      font-family: 'Share Tech Mono', monospace;
+    }
+
+    #loader.fade-out {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    .spinner {
+      width: 45px;
+      height: 45px;
+      border: 2px solid rgba(255, 255, 255, 0.05);
+      border-top-color: var(--hud-accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      box-shadow: 0 0 12px var(--hud-glow);
+    }
+
+    #loader h2 {
+      font-size: 14px;
+      font-weight: 400;
+      letter-spacing: 6px;
+      color: var(--mono-bright);
+    }
+
+    #loader-status {
+      font-size: 10px;
+      color: var(--mono-muted);
+    }
+
+    #skip-btn {
+      margin-top: 15px;
+      padding: 8px 18px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--mono-dim);
+      color: var(--mono-bright);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+    }
+
+    #skip-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: var(--hud-accent);
+      box-shadow: 0 0 10px var(--hud-glow);
+    }
+
+    #toast-notification {
+      position: absolute;
+      bottom: 95px;
+      left: 50%;
+      transform: translateX(-50%) translateY(15px);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--panel-border);
+      backdrop-filter: blur(8px);
+      color: var(--mono-bright);
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+      z-index: 50;
+      opacity: 0;
+      visibility: hidden;
+      transition: all 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+    }
+
+    #toast-notification.show {
+      opacity: 1;
+      visibility: visible;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    /* Cooldown Progress bar */
+    .progress-bar-container {
+      width: 100%;
+      height: 4px;
+      background: var(--mono-dim);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 5px;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--hud-accent);
+      box-shadow: 0 0 8px var(--hud-glow);
+      transition: width 0.1s linear;
+    }
+
+    .gesture-indicator {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .gesture-indicator.active {
+      background: rgba(0, 240, 255, 0.15);
+      color: var(--hud-accent);
+      text-shadow: 0 0 8px var(--hud-glow);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Loader Screen -->
+  <div id="loader">
+    <div class="spinner"></div>
+    <h2>NETWORK TOPOLOGY HUD</h2>
+    <div id="loader-status">INITIALIZING WEBCAM FEED...</div>
+    <button id="skip-btn">Launch Standalone Simulator</button>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast-notification">Camera access requested - Hand tracking enabled</div>
+
+  <div id="hud-container">
+    
+    <!-- Video and Canvas Canvas Wrapper -->
+    <div id="canvas-wrapper">
+      <video id="webcam-video" autoplay playsinline muted></video>
+      <canvas id="hud-canvas"></canvas>
+    </div>
+
+
+    <!-- Leaf Node Full-Screen Overlay -->
+    <div id="leaf-overlay">
+      <div id="leaf-overlay-card">
+        <div id="leaf-overlay-label">Terminal Node</div>
+        <div id="leaf-overlay-name">Node Name</div>
+        <div id="leaf-overlay-desc">Description goes here.</div>
+        <div id="leaf-overlay-hint">[LEFT PINCH] to exit &nbsp;·&nbsp; No deeper path exists</div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. DATA DEFINITIONS (Hierarchical Tree Structure)
+    // =========================================================================
+    const treeData = {
+      name: "Thoughts Matrix",
+      desc: "Root level coordinates of the cognitive database. Tracks connections between AI, human expression, and information tools.",
+      children: [
+        {
+          name: "Artificial Intelligence",
+          desc: "Computational models simulating human cognition, pattern matching, neural processing, and dimensional representation.",
+          children: [
+            {
+              name: "Neural Networks",
+              desc: "Hierarchical interconnected artificial neurons optimizing high-dimensional mathematical functions via backpropagation.",
+              children: [
+                { name: "Perceptrons", desc: "The foundational single-layer binary classifiers proposed by Frank Rosenblatt in 1957." },
+                { name: "Embeddings", desc: "Low-dimensional vector representations mapping semantic properties of complex symbols." },
+                { name: "Transformers", desc: "Attention-based sequence transduction architectures revolutionizing NLP and deep learning." }
+              ]
+            },
+            {
+              name: "Computer Vision",
+              desc: "Algorithmic extraction of structural, volumetric, and semantic context from raster image data fields.",
+              children: [
+                { name: "ConvNets", desc: "Translation-invariant spatial feature extraction pipelines using mathematical convolutions." },
+                { name: "NeRFs", desc: "Neural Radiance Fields representing continuous 3D scenes via neural network volume rendering." },
+                { name: "Gaussian Splatting", desc: "Real-time 3D reconstruction using rasterization of anisotropic 3D Gaussians." }
+              ]
+            },
+            {
+              name: "Cognitive Science",
+              desc: "Interdisciplinary study of mind, intelligence, learning, and systemic mental structures.",
+              children: [
+                { name: "Mental Models", desc: "Internal cognitive representations of external realities used to make decisions." },
+                { name: "Synaptic Plasticity", desc: "The biochemical capacity of neural connections to strengthen or weaken over time." },
+                { name: "Neural Darwinism", desc: "Selectionist theory of brain development mapping neural group selections." }
+              ]
+            },
+            {
+              name: "Natural Language",
+              desc: "Processing and generation of human-readable symbols, syntactic grammar, and semantic vectors.",
+              children: [
+                { name: "Tokenization", desc: "Deconstructing text streams into discrete semantic sub-word units." },
+                { name: "Vector Space", desc: "High-dimensional coordinate structures where distance models semantic similarity." }
+              ]
+            }
+          ]
+        },
+        {
+          name: "Human Expression",
+          desc: "Systemic methods by which humans encode, transmit, and record subjective experience, movement, and aesthetic language.",
+          children: [
+            {
+              name: "Notation Systems",
+              desc: "Symbolic spatial geometries designed to preserve temporal kinetic and sonic performance.",
+              children: [
+                { name: "Dance Writing", desc: "Formal graphic notation systems encoding bodily kinetics, posture, and spatial pathways." },
+                { name: "Sheet Music", desc: "Five-line staff system representing pitch, duration, and dynamics of acoustic sound." },
+                { name: "Labanotation", desc: "Rudolf Laban's detailed abstract taxonomy mapping human motion parameters." }
+              ]
+            },
+            {
+              name: "Generative Art",
+              desc: "Autonomous, rule-based systems producing aesthetic outcomes with varying degrees of systemic entropy.",
+              children: [
+                { name: "L-Systems", desc: "Parallel string-rewriting grammars modeling biological growth patterns and fractals." },
+                { name: "Fractals", desc: "Infinite self-similar mathematical topologies exhibiting fractional Hausdorff dimensions." },
+                { name: "Cellular Automata", desc: "Discrete computational cells evolving on grids based on local neighborhood states." }
+              ]
+            },
+            {
+              name: "Media Theory",
+              desc: "Historical and philosophical analysis of technological extension channels and their cognitive impacts.",
+              children: [
+                { name: "Understanding Media", desc: "Marshall McLuhan's study mapping the psychological changes caused by technological mediums." },
+                { name: "Gutenberg Galaxy", desc: "Analyzing how movable print type restructured human sensory ratios and typographic culture." },
+                { name: "Medium is Massage", desc: "Highlighting how the sensory format of a medium shapes human association patterns." }
+              ]
+            }
+          ]
+        },
+        {
+          name: "Information Systems",
+          desc: "Technological infrastructures designed to store, retrieve, link, and display knowledge structures asynchronously.",
+          children: [
+            {
+              name: "Hypermedia Vision",
+              desc: "Pioneering concepts of non-linear text architectures, associative search, and global document indices.",
+              children: [
+                { name: "Memex", desc: "Vannevar Bush's conceptual desktop machine linking microfilms via associative trails." },
+                { name: "Project Xanadu", desc: "Ted Nelson's vision of two-way linked parallel documents with transclusion support." },
+                { name: "World Wide Web", desc: "Tim Berners-Lee's global decentralized hypertext platform built on HTTP and HTML." }
+              ]
+            },
+            {
+              name: "Personal Computing",
+              desc: "Empowering individual agency via interactive graphic environments and local object-oriented architectures.",
+              children: [
+                { name: "Dynabook", desc: "Alan Kay's concept of a portable, interactive educational computer for children." },
+                { name: "Alto GUI", desc: "Xerox PARC's desktop metaphor integrating overlapping windows, icons, and mouse pointer." },
+                { name: "Smalltalk", desc: "Pioneering dynamic object-oriented programming language and graphical environment." }
+              ]
+            },
+            {
+              name: "Cybernetics",
+              desc: "The study of control, feedback, communications, and regulation loops in complex systems.",
+              children: [
+                { name: "Feedback Loops", desc: "Causal loops where system output is fed back to regulate subsequent system behavior." },
+                { name: "Homeostasis", desc: "Dynamic equilibrium maintained by regulatory feedback systems within live systems." },
+                { name: "System Dynamics", desc: "Methodology mapping stocks, flows, and feedback loops to study complex industrial systems." }
+              ]
+            }
+          ]
+        },
+        {
+          name: "Quantum Computation",
+          desc: "Harnessing quantum mechanics to process information in high-dimensional computational spaces.",
+          children: [
+            { name: "Superposition", desc: "Quantum states existing in multiple configurations simultaneously." },
+            { name: "Entanglement", desc: "Non-local physical correlations between distant quantum particle states." },
+            { name: "Bloch Sphere", desc: "Geometrical representation of the pure state space of a two-level quantum mechanical system." }
+          ]
+        },
+        {
+          name: "Biological Hardware",
+          desc: "Organic neural tissue, cellular networks, and bio-silicon interfaces for analog cognitive processing."
+        },
+        {
+          name: "Entropy & Cosmology",
+          desc: "Thermodynamic and cosmological vectors mapping order, information decay, and universal structures.",
+          children: [
+            { name: "Thermal Decay", desc: "The dissipation of organized energy patterns into uniform ambient entropy." },
+            { name: "Hawking Radiation", desc: "Quantum effects causing black holes to slowly emit thermal energy." }
+          ]
+        }
+      ]
+    };
+
+    // =========================================================================
+    // 2. CONFIGURATION & STATE
+    // =========================================================================
+    const CONFIG = {
+      parentColor: '#00f0ff',        // Cyan parent
+      parentGlow: 'rgba(0, 240, 255, 0.45)',
+      monoBright: '#ffffff',         // Monochromatic kids & UI
+      monoMuted: 'rgba(255, 255, 255, 0.55)',
+      monoDim: 'rgba(255, 255, 255, 0.15)',
+      monoBgLine: 'rgba(255, 255, 255, 0.08)',
+      zoomFov: 500,                  // Camera FOV
+      nodeRadius: 18,
+      childOrbitRadius: 160,
+      pinchRatioThreshold: 0.42,     // Ratio of (thumb-to-index distance / hand size) for zoom out
+      spreadRatioThreshold: 1.80,    // Ratio of (thumb-to-index distance / hand size) for zoom in
+      neutralMinRatio: 0.65,         // Bottom of neutral pointer zone
+      neutralMaxRatio: 1.35,         // Top of neutral pointer zone
+      zoomCooldownDuration: 1300     // Cooldown in ms
+    };
+
+    // Navigation state
+    let activePath = ["Thoughts Matrix"];
+    let currentNode = treeData;
+    let currentChildrenPositions = []; // Persistent coordinates of children nodes
+    let selectedChildIndex = -1;
+    let leftGestureLocked = false;   // Prevents continuous left pinch zooms
+    let rightGestureLocked = false;  // Prevents continuous right pinch zooms
+    let isRotationActive = false;    // Whether 5-finger rotation is currently active
+    let isExpandedMode = false;      // Portal mode: show all nodes flattened
+    let lastPortalToggleTime = 0;
+    const portalToggleCooldown = 1500;
+    let flatNodesList = [];          // Persistent nodes list for Force-Directed physics
+
+    // Node dragging state
+    let grabbedNodeIndex = -1;       // Index of currently grabbed child node (-1 if none)
+    let grabbedHandType = null;      // "Left" or "Right"
+    let grabbedInitialZ2 = 0;        // Camera-relative Z depth of node at grab moment
+
+    // 3D rotations
+    let rotateX = 0.25;
+    let rotateY = -0.4;
+    let targetRotateX = 0.25;
+    let targetRotateY = -0.4;
+    let isMouseDown = false;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+
+    // Transition variables
+    let isTransitioning = false;
+    let transitionProgress = 0.0;
+    let transitionType = "in"; // "in" or "out"
+    let transitionDuration = 800; // ms
+    let transitionStartTime = 0;
+    
+    // Transition node models
+    let transitionPrevKids = [];
+    let transitionNextKids = [];
+    let transitionPrevParentPos = {x: 0, y: 0, z: 0};
+    let transitionNextParentPos = {x: 0, y: 0, z: 0};
+
+    // Pointer state
+    let pointerX = window.innerWidth / 2;
+    let pointerY = window.innerHeight / 2;
+    let pointerTargetX = window.innerWidth / 2;
+    let pointerTargetY = window.innerHeight / 2;
+    let isHandPresent = false;
+    let rightHandPresent = false;
+    let landmarksData = null;
+    let trackedHands = [];
+
+    // Cooldown
+    let lastZoomTime = 0;
+
+    // DOM references
+    const canvas = document.getElementById('hud-canvas');
+    const ctx = canvas.getContext('2d');
+    const video = document.getElementById('webcam-video');
+    const loader = document.getElementById('loader');
+    const loaderStatus = document.getElementById('loader-status');
+    const toast = document.getElementById('toast-notification');
+    const pathListEl = document.getElementById('path-list');
+    const activeNodeNameEl = document.getElementById('active-node-name');
+    const activeNodeDescEl = document.getElementById('active-node-desc');
+    
+    const trackingStatusEl = document.getElementById('tracking-status');
+    const selectedKidNameEl = document.getElementById('selected-kid-name');
+    const leftPinchValueEl = document.getElementById('left-pinch-value');
+    const rightPinchValueEl = document.getElementById('right-pinch-value');
+    const activeGestureNameEl = document.getElementById('active-gesture-name');
+    const rotationModeEl = document.getElementById('rotation-mode');
+    const cooldownBarEl = document.getElementById('cooldown-bar');
+
+    // Leaf overlay refs
+    const leafOverlayEl      = document.getElementById('leaf-overlay');
+    const leafOverlayNameEl  = document.getElementById('leaf-overlay-name');
+    const leafOverlayDescEl  = document.getElementById('leaf-overlay-desc');
+
+    // Leaf overlay state
+    let isLeafOverlayVisible = false;
+
+    function showLeafOverlay(node) {
+      leafOverlayNameEl.textContent = node.name.toUpperCase();
+      leafOverlayDescEl.textContent = node.desc || 'A terminal node — no further branches exist.';
+      leafOverlayEl.classList.add('visible');
+      isLeafOverlayVisible = true;
+    }
+
+    function hideLeafOverlay() {
+      leafOverlayEl.classList.remove('visible');
+      isLeafOverlayVisible = false;
+    }
+
+    // =========================================================================
+    // 3. TREE NAVIGATION FUNCTIONS
+    // =========================================================================
+    function getNodeFromPath(path) {
+      let node = treeData;
+      for (let i = 1; i < path.length; i++) {
+        node = node.children.find(child => child.name === path[i]);
+      }
+      return node;
+    }
+
+    function updatePathUI() {
+      if (pathListEl) {
+        pathListEl.innerHTML = "";
+        
+        if (isExpandedMode) {
+          const span = document.createElement('span');
+          span.textContent = "THOUGHTS MATRIX";
+          pathListEl.appendChild(span);
+          
+          const sep = document.createElement('span');
+          sep.textContent = " > ";
+          sep.style.color = "rgba(255,255,255,0.2)";
+          pathListEl.appendChild(sep);
+          
+          const spanPortal = document.createElement('span');
+          spanPortal.textContent = "PORTAL OVERVIEW";
+          spanPortal.className = "path-active";
+          pathListEl.appendChild(spanPortal);
+          
+          if (activeNodeNameEl) activeNodeNameEl.textContent = "Portal Geometry";
+          if (activeNodeDescEl) activeNodeDescEl.textContent = "Flattened network topology view showing all coordinates of the cognitive database.";
+          return;
+        }
+
+        activePath.forEach((nodeName, idx) => {
+          const span = document.createElement('span');
+          span.textContent = nodeName.toUpperCase();
+          if (idx === activePath.length - 1) {
+            span.className = "path-active";
+          }
+          pathListEl.appendChild(span);
+          
+          if (idx < activePath.length - 1) {
+            const sep = document.createElement('span');
+            sep.textContent = " > ";
+            sep.style.color = "rgba(255,255,255,0.2)";
+            pathListEl.appendChild(sep);
+          }
+        });
+      }
+
+      // Update Details Panel
+      if (activeNodeNameEl) {
+        activeNodeNameEl.textContent = currentNode.name;
+      }
+      if (activeNodeDescEl) {
+        activeNodeDescEl.textContent = currentNode.desc || "Interactive node of the topology.";
+      }
+    }
+
+    // Helper to clone positions for transitions without copying object references
+    function clonePositions(positions) {
+      return positions.map(pos => ({
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        name: pos.name,
+        hasChildren: pos.hasChildren
+      }));
+    }
+
+    // Zoom in to selected child
+    function zoomInToNode() {
+      if (isTransitioning) return;
+      if (selectedChildIndex === -1) return;
+      const kids = currentNode.children || [];
+      const targetChild = kids[selectedChildIndex];
+      if (!targetChild || !targetChild.children) {
+        // Leaf node has no kids — show the description overlay
+        showLeafOverlay(targetChild);
+        showToast(`Terminal node: ${targetChild.name}`);
+        return;
+      }
+
+      // Start transition
+      isTransitioning = true;
+      transitionType = "in";
+      transitionProgress = 0.0;
+      transitionStartTime = Date.now();
+      lastZoomTime = Date.now();
+
+      // Store transition nodes
+      transitionPrevKids = clonePositions(currentChildrenPositions);
+      
+      // Update path
+      activePath.push(targetChild.name);
+      const nextNode = targetChild;
+      
+      // Store new children positions relative to parent at center (will expand outwards)
+      currentChildrenPositions = getChildrenPositions(nextNode);
+      transitionNextKids = clonePositions(currentChildrenPositions);
+
+      currentNode = nextNode;
+      selectedChildIndex = -1; // Reset selection
+      updatePathUI();
+    }
+
+    // Zoom out to parent's parent
+    function zoomOutNode() {
+      // Always dismiss the leaf overlay on any back gesture
+      if (isLeafOverlayVisible) {
+        hideLeafOverlay();
+        lastZoomTime = Date.now(); // prevent immediate re-trigger
+        return;
+      }
+      if (isTransitioning) return;
+      if (activePath.length <= 1) {
+        showToast("Root level - Cannot zoom out further");
+        return;
+      }
+
+      // Start transition
+      isTransitioning = true;
+      transitionType = "out";
+      transitionProgress = 0.0;
+      transitionStartTime = Date.now();
+      lastZoomTime = Date.now();
+
+      // Current children (which will scale down/shrink)
+      transitionPrevKids = clonePositions(currentChildrenPositions);
+
+      // Node we are going back to
+      const poppedName = activePath.pop();
+      const parentNode = getNodeFromPath(activePath);
+
+      // Next kids (which will scale back up)
+      currentChildrenPositions = getChildrenPositions(parentNode);
+      transitionNextKids = clonePositions(currentChildrenPositions);
+
+      // Set selected child to be the one we just exited from, to make navigation intuitive
+      const exitedIndex = (parentNode.children || []).findIndex(c => c.name === poppedName);
+      currentNode = parentNode;
+      selectedChildIndex = exitedIndex;
+
+      updatePathUI();
+    }
+
+    // Compute circular orbits in 3D for children of a node, storing coords directly on the node object to persist drag positions
+    function getChildrenPositions(node) {
+      const kids = node.children || [];
+      const count = kids.length;
+      const positions = [];
+      const R = CONFIG.childOrbitRadius;
+      
+      for (let i = 0; i < count; i++) {
+        const angle = (i * 2 * Math.PI) / count;
+        // Introduce wave z offsets to give dynamic 3D depth
+        const zOffset = 35 * Math.sin(i * 1.7);
+        
+        // Persist coordinates directly on the data tree
+        if (kids[i].x === undefined) {
+          kids[i].x = R * Math.cos(angle);
+          kids[i].y = R * Math.sin(angle);
+          kids[i].z = zOffset;
+        }
+
+        positions.push({
+          x: kids[i].x,
+          y: kids[i].y,
+          z: kids[i].z,
+          name: kids[i].name,
+          hasChildren: !!kids[i].children,
+          ref: kids[i]
+        });
+      }
+      return positions;
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // =========================================================================
+    // 4. INTERACTION & INPUT FALLBACKS (DISABLED)
+    // =========================================================================
+
+    // Offline bypass
+    document.getElementById('skip-btn').addEventListener('click', () => {
+      loader.classList.add('fade-out');
+    });
+
+    // =========================================================================
+    // 5. 3D MATH & PROJECTIONS
+    // =========================================================================
+    function project3D(x, y, z, width, height) {
+      // Rotation Matrix Yaw (Y-axis)
+      const cosY = Math.cos(rotateY);
+      const sinY = Math.sin(rotateY);
+      const x1 = x * cosY - z * sinY;
+      const z1 = x * sinY + z * cosY;
+
+      // Rotation Matrix Pitch (X-axis)
+      const cosX = Math.cos(rotateX);
+      const sinX = Math.sin(rotateX);
+      const y2 = y * cosX + z1 * sinX;
+      const z2 = -y * sinX + z1 * cosX;
+
+      // 3D Perspective Projection
+      const fov = CONFIG.zoomFov;
+      const scale = fov / (fov + z2);
+      
+      const screenX = (width / 2) + x1 * scale;
+      const screenY = (height / 2) - y2 * scale;
+
+      return {
+        x: screenX,
+        y: screenY,
+        z: z2,
+        scale: scale
+      };
+    }
+
+    function unproject3D(screenX, screenY, initialZ2, width, height) {
+      const fov = CONFIG.zoomFov;
+      const scale = fov / (fov + initialZ2);
+      
+      const x2 = (screenX - width / 2) / scale;
+      const y2 = -(screenY - height / 2) / scale;
+      const z2 = initialZ2;
+
+      const cosX = Math.cos(rotateX);
+      const sinX = Math.sin(rotateX);
+      
+      const x1 = x2;
+      const y1 = y2 * cosX - z2 * sinX;
+      const z1 = y2 * sinX + z2 * cosX;
+
+      const cosY = Math.cos(rotateY);
+      const sinY = Math.sin(rotateY);
+
+      const x = x1 * cosY + z1 * sinY;
+      const y = y1;
+      const z = -x1 * sinY + z1 * cosY;
+
+      return { x, y, z };
+    }
+
+    function landmarkToScreen(lm, width, height) {
+      if (!lm) return { x: 0, y: 0 };
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        const vScale = Math.max(width / video.videoWidth, height / video.videoHeight);
+        const w = video.videoWidth * vScale;
+        const h = video.videoHeight * vScale;
+        const xOffset = (width - w) / 2;
+        const yOffset = (height - h) / 2;
+        
+        return {
+          x: xOffset + (1.0 - lm.x) * w,
+          y: yOffset + lm.y * h
+        };
+      } else {
+        return {
+          x: (1.0 - lm.x) * width,
+          y: lm.y * height
+        };
+      }
+    }
+
+    function initFlatNodes(node, parentNode = null, level = 0) {
+      const radius = level === 0 ? 0 : (level === 1 ? 220 : 220 + (level - 1) * 120);
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      
+      const px = parentNode ? parentNode.x : 0;
+      const py = parentNode ? parentNode.y : 0;
+      const pz = parentNode ? parentNode.z : 0;
+
+      node.x = px + radius * Math.sin(phi) * Math.cos(theta);
+      node.y = py + radius * Math.sin(phi) * Math.sin(theta);
+      node.z = pz + radius * Math.cos(phi);
+
+      const flatNode = {
+        name: node.name,
+        desc: node.desc,
+        ref: node,
+        parent: parentNode,
+        level: level,
+        x: node.x,
+        y: node.y,
+        z: node.z,
+        vx: 0,
+        vy: 0,
+        vz: 0
+      };
+      flatNodesList.push(flatNode);
+
+      if (node.children) {
+        node.children.forEach(child => {
+          initFlatNodes(child, flatNode, level + 1);
+        });
+      }
+    }
+
+    function updatePhysics() {
+      // 1. Calculate repulsion forces between all pairs of nodes
+      for (let i = 0; i < flatNodesList.length; i++) {
+        const nodeA = flatNodesList[i];
+        for (let j = i + 1; j < flatNodesList.length; j++) {
+          const nodeB = flatNodesList[j];
+          
+          const dx = nodeA.x - nodeB.x;
+          const dy = nodeA.y - nodeB.y;
+          const dz = nodeA.z - nodeB.z;
+          const distSq = dx * dx + dy * dy + dz * dz;
+          const dist = Math.sqrt(distSq) || 0.001;
+          
+          const repelStrength = 24000 / (distSq + 350);
+          
+          const fx = (dx / dist) * repelStrength;
+          const fy = (dy / dist) * repelStrength;
+          const fz = (dz / dist) * repelStrength;
+          
+          const isAGrabbed = (isExpandedMode && grabbedNodeIndex === i) || 
+                            (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === nodeA.ref);
+          const isBGrabbed = (isExpandedMode && grabbedNodeIndex === j) || 
+                            (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === nodeB.ref);
+          
+          if (!isAGrabbed) {
+            nodeA.vx += fx;
+            nodeA.vy += fy;
+            nodeA.vz += fz;
+          }
+          if (!isBGrabbed) {
+            nodeB.vx -= fx;
+            nodeB.vy -= fy;
+            nodeB.vz -= fz;
+          }
+        }
+      }
+
+      // 2. Calculate link attraction forces (between children and parents)
+      const targetDist = 180;
+      const springK = 0.04;
+      
+      for (let i = 0; i < flatNodesList.length; i++) {
+        const node = flatNodesList[i];
+        if (node.parent) {
+          const parent = node.parent;
+          const dx = node.x - parent.x;
+          const dy = node.y - parent.y;
+          const dz = node.z - parent.z;
+          const dist = Math.hypot(dx, dy, dz) || 0.001;
+          
+          const force = springK * (dist - targetDist);
+          
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          const fz = (dz / dist) * force;
+          
+          const isNodeGrabbed = (isExpandedMode && grabbedNodeIndex === i) || 
+                                (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === node.ref);
+          const isParentGrabbed = (isExpandedMode && grabbedNodeIndex !== -1 && flatNodesList[grabbedNodeIndex] === parent) ||
+                                  (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === parent.ref);
+          
+          if (!isNodeGrabbed) {
+            node.vx -= fx;
+            node.vy -= fy;
+            node.vz -= fz;
+          }
+          if (!isParentGrabbed && parent.level > 0) {
+            parent.vx += fx;
+            parent.vy += fy;
+            parent.vz += fz;
+          }
+        }
+      }
+
+      // 3. Center pull / Gravity
+      const gravity = 0.008;
+      for (let i = 0; i < flatNodesList.length; i++) {
+        const node = flatNodesList[i];
+        const pull = node.level === 0 ? 0.06 : gravity;
+        
+        const isNodeGrabbed = (isExpandedMode && grabbedNodeIndex === i) || 
+                              (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === node.ref);
+        if (!isNodeGrabbed) {
+          node.vx -= node.x * pull;
+          node.vy -= node.y * pull;
+          node.vz -= node.z * pull;
+        }
+      }
+
+      // 4. Update positions & damping
+      const damping = 0.85;
+      for (let i = 0; i < flatNodesList.length; i++) {
+        const node = flatNodesList[i];
+        const isNodeGrabbed = (isExpandedMode && grabbedNodeIndex === i) || 
+                              (!isExpandedMode && grabbedNodeIndex !== -1 && currentChildrenPositions[grabbedNodeIndex] && currentChildrenPositions[grabbedNodeIndex].ref === node.ref);
+        if (isNodeGrabbed) {
+          node.vx = 0;
+          node.vy = 0;
+          node.vz = 0;
+        } else {
+          node.x += node.vx;
+          node.y += node.vy;
+          node.z += node.vz;
+          
+          node.vx *= damping;
+          node.vy *= damping;
+          node.vz *= damping;
+        }
+      }
+    }
+
+    function handleNodeDragging(leftHand, rightHand) {
+      if (isTransitioning) {
+        grabbedNodeIndex = -1;
+        grabbedHandType = null;
+        return;
+      }
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      // Get current list of nodes based on mode
+      let activeNodesList = [];
+      if (isExpandedMode) {
+        activeNodesList = flatNodesList;
+      } else {
+        activeNodesList = currentChildrenPositions;
+      }
+
+      // 1. Process active grab update / release
+      if (grabbedNodeIndex !== -1) {
+        const hand = (grabbedHandType === "Right") ? rightHand : leftHand;
+        if (!hand) {
+          grabbedNodeIndex = -1;
+          grabbedHandType = null;
+          return;
+        }
+
+        if (is5FingerPinch(hand)) {
+          grabbedNodeIndex = -1;
+          grabbedHandType = null;
+          return;
+        }
+
+        const wrist = hand[0];
+        const middleBase = hand[9];
+        const thumb = hand[4];
+        const index = hand[8];
+        if (!wrist || !middleBase || !thumb || !index) {
+          grabbedNodeIndex = -1;
+          grabbedHandType = null;
+          return;
+        }
+
+        const hdx = wrist.x - middleBase.x;
+        const hdy = wrist.y - middleBase.y;
+        let handSize = Math.sqrt(hdx * hdx + hdy * hdy);
+        if (handSize < 0.01) handSize = 0.01;
+
+        const dx = thumb.x - index.x;
+        const dy = thumb.y - index.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const ratio = dist / handSize;
+
+        if (ratio > 0.65) {
+          grabbedNodeIndex = -1;
+          grabbedHandType = null;
+          return;
+        }
+
+        const midX = (thumb.x + index.x) / 2;
+        const midY = (thumb.y + index.y) / 2;
+        const screenPos = landmarkToScreen({ x: midX, y: midY }, width, height);
+        const handX = screenPos.x;
+        const handY = screenPos.y;
+
+        const unprojected = unproject3D(handX, handY, grabbedInitialZ2, width, height);
+        const kid = activeNodesList[grabbedNodeIndex];
+        if (kid) {
+          if (isExpandedMode) {
+            kid.x = unprojected.x;
+            kid.y = unprojected.y;
+            kid.z = unprojected.z;
+            kid.vx = 0;
+            kid.vy = 0;
+            kid.vz = 0;
+          } else {
+            kid.x = unprojected.x;
+            kid.y = unprojected.y;
+            kid.z = unprojected.z;
+            
+            const flatParent = flatNodesList.find(n => n.ref === currentNode);
+            const flatChild = flatNodesList.find(n => n.ref === kid.ref);
+            if (flatParent && flatChild) {
+              flatChild.x = flatParent.x + unprojected.x;
+              flatChild.y = flatParent.y + unprojected.y;
+              flatChild.z = flatParent.z + unprojected.z;
+              flatChild.vx = 0;
+              flatChild.vy = 0;
+              flatChild.vz = 0;
+            }
+          }
+        }
+        return;
+      }
+
+      // 2. Scan for a new grab
+      const checkGrabForHand = (hand, handType) => {
+        if (!hand) return false;
+        if (is5FingerPinch(hand)) return false;
+
+        const wrist = hand[0];
+        const middleBase = hand[9];
+        const thumb = hand[4];
+        const index = hand[8];
+        if (!wrist || !middleBase || !thumb || !index) return false;
+
+        const hdx = wrist.x - middleBase.x;
+        const hdy = wrist.y - middleBase.y;
+        let handSize = Math.sqrt(hdx * hdx + hdy * hdy);
+        if (handSize < 0.01) handSize = 0.01;
+
+        const dx = thumb.x - index.x;
+        const dy = thumb.y - index.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const ratio = dist / handSize;
+
+        if (ratio > 0.52) return false;
+
+        const tScreen = landmarkToScreen(thumb, width, height);
+        const iScreen = landmarkToScreen(index, width, height);
+        const tx = tScreen.x;
+        const ty = tScreen.y;
+        const ix = iScreen.x;
+        const iy = iScreen.y;
+
+        for (let idx = 0; idx < activeNodesList.length; idx++) {
+          const kid = activeNodesList[idx];
+          
+          if (isExpandedMode && kid.parent === null) continue; // Don't grab absolute root
+
+          const proj = project3D(kid.x, kid.y, kid.z, width, height);
+
+          const r_node = CONFIG.nodeRadius * proj.scale;
+          const R_circ = 1.7 * r_node;
+
+          const d_thumb = Math.hypot(tx - proj.x, ty - proj.y);
+          const d_index = Math.hypot(ix - proj.x, iy - proj.y);
+          const tolerance = Math.max(22, 25 * proj.scale);
+
+          const thumbTouching = Math.abs(d_thumb - R_circ) < tolerance;
+          const indexTouching = Math.abs(d_index - R_circ) < tolerance;
+
+          if (thumbTouching && indexTouching) {
+            grabbedNodeIndex = idx;
+            grabbedHandType = handType;
+            grabbedInitialZ2 = proj.z;
+            showToast(`Contact established: ${kid.name.toUpperCase()}`);
+            return true;
+          }
+        }
+        return false;
+      };
+
+      if (!checkGrabForHand(rightHand, "Right")) {
+        checkGrabForHand(leftHand, "Left");
+      }
+    }
+
+    // =========================================================================
+    // 6. MAIN DRAWING & ANIMATION LOOP
+    // =========================================================================
+    function drawHUD() {
+      requestAnimationFrame(drawHUD);
+
+      const width = canvas.width = window.innerWidth;
+      const height = canvas.height = window.innerHeight;
+
+      // Clean viewport
+      ctx.fillStyle = '#020204';
+      ctx.fillRect(0, 0, width, height);
+
+      // Render camera in background (Grayscale, tinted, centered)
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.save();
+        // Grayscale, slightly darkened but clearly visible, and mirrored
+        ctx.filter = 'grayscale(100%) brightness(45%) contrast(110%)';
+        const vScale = Math.max(width / video.videoWidth, height / video.videoHeight);
+        const w = video.videoWidth * vScale;
+        const h = video.videoHeight * vScale;
+        const x = (width - w) / 2;
+        const y = (height - h) / 2;
+        
+        // Mirror coordinates correctly (coordinates are flipped, so standard x/w works)
+        ctx.translate(width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, x, y, w, h);
+        ctx.restore();
+      }
+
+      // Draw subtle background HUD grid (monochromatic)
+      drawBackgroundRadarGrid(width, height);
+
+      // Cooldown timer update
+      const now = Date.now();
+      const elapsedCooldown = now - lastZoomTime;
+      const cooldownPercent = Math.min(100, (elapsedCooldown / CONFIG.zoomCooldownDuration) * 100);
+      if (cooldownBarEl) {
+        cooldownBarEl.style.width = `${cooldownPercent}%`;
+      }
+
+      // Interpolate rotations
+      const rotSpeed = isRotationActive ? 0.20 : 0.08;
+      rotateX += (targetRotateX - rotateX) * rotSpeed;
+      rotateY += (targetRotateY - rotateY) * rotSpeed;
+
+      // Rotate slowly in 3D when no active user input
+      const idleTime = now - lastZoomTime;
+      if (idleTime > 4000 && !isMouseDown && !isHandPresent) {
+        targetRotateY += 0.0015;
+        targetRotateX = 0.25 + 0.08 * Math.sin(now * 0.0005);
+      }
+
+      // Interpolate pointer coordinates
+      pointerX += (pointerTargetX - pointerX) * 0.2;
+      pointerY += (pointerTargetY - pointerY) * 0.2;
+
+      // Update transition animations
+      if (isTransitioning) {
+        const timePassed = now - transitionStartTime;
+        transitionProgress = Math.min(1.0, timePassed / transitionDuration);
+        if (transitionProgress >= 1.0) {
+          isTransitioning = false;
+        }
+      }
+
+      // =======================================================================
+      // SCENE GEOMETRY GENERATION
+      // =======================================================================
+      let parentPos = {x: 0, y: 0, z: 0};
+      let childrenToDraw = [];
+
+      // Run Force-Directed Physics calculation step in every frame
+      updatePhysics();
+
+      if (isExpandedMode) {
+        // --- PORTAL MODE: DRAW ALL NODES IN THE HIERARCHY ---
+        const projectedFullNodes = flatNodesList.map((n, idx) => {
+          const proj = project3D(n.x, n.y, n.z, width, height);
+          return {
+            proj: proj,
+            idx: idx,
+            name: n.name,
+            hasChildren: n.ref.children && n.ref.children.length > 0,
+            ref: n.ref,
+            parent: n.parent,
+            x: n.x,
+            y: n.y,
+            z: n.z
+          };
+        });
+
+        // 1. Selection logic
+        let nearestIndex = -1;
+        if (rightHandPresent && grabbedNodeIndex === -1) {
+          const pScreenX = pointerX;
+          const pScreenY = pointerY;
+          let minDistance = 999999;
+          projectedFullNodes.forEach(kn => {
+            const dx = kn.proj.x - pScreenX;
+            const dy = kn.proj.y - pScreenY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            if (dist < minDistance && dist < 120) {
+              minDistance = dist;
+              nearestIndex = kn.idx;
+            }
+          });
+        }
+        selectedChildIndex = nearestIndex;
+
+        if (selectedChildIndex !== -1) {
+          const selNode = projectedFullNodes[selectedChildIndex];
+          if (selectedKidNameEl) selectedKidNameEl.textContent = selNode.name.toUpperCase();
+          if (activeNodeNameEl) activeNodeNameEl.textContent = selNode.name;
+          if (activeNodeDescEl) activeNodeDescEl.textContent = selNode.ref.desc || "Interactive node of the topology.";
+        } else {
+          if (selectedKidNameEl) selectedKidNameEl.textContent = "NONE";
+        }
+
+        // 2. Draw Links (from child to parent)
+        projectedFullNodes.forEach(kn => {
+          if (kn.parent) {
+            const pNode = projectedFullNodes.find(n => n.ref === kn.parent.ref);
+            if (pNode) {
+              drawLink(pNode.proj, kn.proj, 0.22);
+            }
+          }
+        });
+
+        // 3. Draw All Nodes
+        projectedFullNodes.forEach(kn => {
+          const isSelected = kn.idx === selectedChildIndex;
+          const isGrabbed = kn.idx === grabbedNodeIndex;
+          
+          if (isSelected && grabbedNodeIndex === -1) {
+            drawSelectionBox(kn.proj.x, kn.proj.y, kn.proj.scale);
+          }
+
+          const isRoot = kn.parent === null;
+          drawNode(
+            kn.proj.x, 
+            kn.proj.y, 
+            kn.proj.scale, 
+            kn.name, 
+            1.0, 
+            isRoot, 
+            0.0, 
+            kn.hasChildren, 
+            isGrabbed
+          );
+        });
+
+      } else if (!isTransitioning) {
+        // Static State: Sync currentChildrenPositions from flatNodesList physics
+        const flatParent = flatNodesList.find(n => n.ref === currentNode) || {x:0, y:0, z:0};
+        currentChildrenPositions = (currentNode.children || []).map(child => {
+          const flatChild = flatNodesList.find(n => n.ref === child) || {x:0, y:0, z:0};
+          return {
+            x: flatChild.x - flatParent.x,
+            y: flatChild.y - flatParent.y,
+            z: flatChild.z - flatParent.z,
+            name: child.name,
+            hasChildren: child.children && child.children.length > 0,
+            ref: child
+          };
+        });
+        childrenToDraw = currentChildrenPositions;
+      } else {
+        // Dynamic Transition state
+        const t = transitionProgress;
+        
+        // Ease in-out cubic
+        const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+        if (transitionType === "in") {
+          // Zooming in: previous selected child becomes the center parent.
+          // Other siblings fly outward and fade out.
+          // Old parent moves backward and fades out.
+          // New children expand outward from the center and fade in.
+          
+          // Old parent:
+          const oldParentProj = project3D(0, 0, -ease * 300, width, height);
+          drawNode(oldParentProj.x, oldParentProj.y, oldParentProj.scale, "PARENT", 1 - ease, true);
+          
+          // Children drawing
+          transitionPrevKids.forEach((kid, idx) => {
+            if (idx === selectedChildIndex) {
+              // The selected child moves to the center (0,0,0) and becomes the parent
+              const currX = kid.x * (1 - ease);
+              const currY = kid.y * (1 - ease);
+              const currZ = kid.z * (1 - ease);
+              
+              const proj = project3D(currX, currY, currZ, width, height);
+              // Interpolate color from white (mono) to cyan (parent)
+              drawNode(proj.x, proj.y, proj.scale, kid.name, 1.0, false, ease, kid.hasChildren); 
+              parentPos = {x: currX, y: currY, z: currZ}; // Current parent center shifts
+            } else {
+              // Siblings fly outwards and fade out
+              const currX = kid.x * (1 + ease * 2);
+              const currY = kid.y * (1 + ease * 2);
+              const currZ = kid.z * (1 + ease);
+              const proj = project3D(currX, currY, currZ, width, height);
+              drawNode(proj.x, proj.y, proj.scale, kid.name, 1 - ease, false, 0.0, kid.hasChildren);
+              
+              // Draw fading connection to old parent
+              drawLink(oldParentProj, proj, (1 - ease) * 0.25);
+            }
+          });
+
+          // Draw new kids fading in and expanding outwards
+          transitionNextKids.forEach((kid) => {
+            const currX = kid.x * ease;
+            const currY = kid.y * ease;
+            const currZ = kid.z * ease;
+            const proj = project3D(currX, currY, currZ, width, height);
+            drawNode(proj.x, proj.y, proj.scale, kid.name, ease, false, 0.0, kid.hasChildren);
+            
+            // Draw link to the transitioning center
+            const movingParentProj = project3D(parentPos.x, parentPos.y, parentPos.z, width, height);
+            drawLink(movingParentProj, proj, ease * 0.25);
+          });
+
+        } else {
+          // Zooming out: current parent moves back to its circular slot.
+          // Other siblings fly back in from outwards and fade in.
+          // Popped parent fades back in at center.
+          // Old children shrink and fade out.
+          
+          // The new parent (popped parent) moving to center:
+          const newParentProj = project3D(0, 0, (1 - ease) * 300, width, height);
+          drawNode(newParentProj.x, newParentProj.y, newParentProj.scale, currentNode.name, ease, true);
+
+          // Current children shrinking and fading out
+          transitionPrevKids.forEach((kid) => {
+            const currX = kid.x * (1 - ease);
+            const currY = kid.y * (1 - ease);
+            const currZ = kid.z * (1 - ease);
+            const proj = project3D(currX, currY, currZ, width, height);
+            drawNode(proj.x, proj.y, proj.scale, kid.name, 1 - ease, false, 0.0, kid.hasChildren);
+            
+            // Link to the shrinking parent (which is moving to its circular slot)
+            const slotPos = transitionNextKids[selectedChildIndex] || {x: 0, y: 0, z: 0};
+            const movingParentX = slotPos.x * ease;
+            const movingParentY = slotPos.y * ease;
+            const movingParentZ = slotPos.z * ease;
+            const movingParentProj = project3D(movingParentX, movingParentY, movingParentZ, width, height);
+            
+            drawLink(movingParentProj, proj, (1 - ease) * 0.25);
+          });
+
+          // Siblings returning and fading in
+          transitionNextKids.forEach((kid, idx) => {
+            if (idx === selectedChildIndex) {
+              // The old parent returns to this slot
+              const currX = kid.x * ease;
+              const currY = kid.y * ease;
+              const currZ = kid.z * ease;
+              const proj = project3D(currX, currY, currZ, width, height);
+              drawNode(proj.x, proj.y, proj.scale, kid.name, 1.0, false, 1 - ease, kid.hasChildren);
+              parentPos = {x: currX, y: currY, z: currZ};
+            } else {
+              // Siblings return from outside
+              const currX = kid.x * (3 - ease * 2);
+              const currY = kid.y * (3 - ease * 2);
+              const currZ = kid.z * (2 - ease);
+              const proj = project3D(currX, currY, currZ, width, height);
+              drawNode(proj.x, proj.y, proj.scale, kid.name, ease, false, 0.0, kid.hasChildren);
+              
+              // Link back to new parent
+              drawLink(newParentProj, proj, ease * 0.25);
+            }
+          });
+        }
+      }
+
+      // =======================================================================
+      // STATIC RENDER & SELECTION CALCULATION
+      // =======================================================================
+      if (!isTransitioning) {
+        // Project parent node
+        const pProj = project3D(parentPos.x, parentPos.y, parentPos.z, width, height);
+        
+        // Project children
+        const projectedKids = childrenToDraw.map((kid, idx) => {
+          const proj = project3D(kid.x, kid.y, kid.z, width, height);
+          return {
+            proj: proj,
+            idx: idx,
+            name: kid.name,
+            hasChildren: kid.hasChildren
+          };
+        });
+
+        // 1. Calculate nearest child to pointer (index finger of Right Hand)
+        let nearestIndex = -1;
+
+        if (rightHandPresent && grabbedNodeIndex === -1) {
+          const pScreenX = pointerX;
+          const pScreenY = pointerY;
+          
+          let minDistance = 999999;
+
+          projectedKids.forEach(kid => {
+            const dx = kid.proj.x - pScreenX;
+            const dy = kid.proj.y - pScreenY;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            // Only select if within active radius
+            if (dist < minDistance && dist < 180) {
+              minDistance = dist;
+              nearestIndex = kid.idx;
+            }
+          });
+        }
+
+        selectedChildIndex = nearestIndex;
+        if (selectedKidNameEl) {
+          selectedKidNameEl.textContent = selectedChildIndex !== -1 ? childrenToDraw[selectedChildIndex].name.toUpperCase() : "NONE";
+        }
+
+        // 2. Draw Links
+        projectedKids.forEach(kid => {
+          drawLink(pProj, kid.proj, 0.25);
+        });
+
+        // 3. Draw parent node (always cyan)
+        drawNode(pProj.x, pProj.y, pProj.scale, currentNode.name, 1.0, true);
+
+        // 4. Draw children nodes (white, unless selected or grabbed)
+        projectedKids.forEach(kid => {
+          const isSelected = kid.idx === selectedChildIndex;
+          const isGrabbed = kid.idx === grabbedNodeIndex;
+          drawNode(kid.proj.x, kid.proj.y, kid.proj.scale, kid.name, 1.0, false, 0.0, kid.hasChildren, isGrabbed);
+          
+          if (isSelected && grabbedNodeIndex === -1) {
+            drawSelectionBox(kid.proj.x, kid.proj.y, kid.proj.scale);
+          }
+        });
+      }
+
+      // =======================================================================
+      // MEDIAPIPE GESTURE HAND OVERLAY
+      // =======================================================================
+      if (isHandPresent && trackedHands.length > 0) {
+        trackedHands.forEach(handLandmarks => {
+          const handIsRotating = is5FingerPinch(handLandmarks);
+          
+          const fingertips = [
+            { idx: 4, isCommand: true },
+            { idx: 8, isCommand: true },
+            { idx: 12, isCommand: false },
+            { idx: 16, isCommand: false },
+            { idx: 20, isCommand: false }
+          ];
+
+          // Draw connecting telemetry line between command fingers
+          const thumbLm = handLandmarks[4];
+          const indexLm = handLandmarks[8];
+          if (thumbLm && indexLm) {
+            const tScreen = landmarkToScreen(thumbLm, width, height);
+            const iScreen = landmarkToScreen(indexLm, width, height);
+            const tx = tScreen.x;
+            const ty = tScreen.y;
+            const ix = iScreen.x;
+            const iy = iScreen.y;
+            
+            ctx.beginPath();
+            ctx.setLineDash([3, 3]);
+            ctx.moveTo(tx, ty);
+            ctx.lineTo(ix, iy);
+            ctx.strokeStyle = CONFIG.parentColor;
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          fingertips.forEach(ft => {
+            const lm = handLandmarks[ft.idx];
+            if (lm) {
+              const screenPos = landmarkToScreen(lm, width, height);
+              const x = screenPos.x;
+              const y = screenPos.y;
+              
+              ctx.save();
+              ctx.beginPath();
+              ctx.arc(x, y, 7, 0, 2 * Math.PI);
+              // All 5 fingertips glow Cyan in rotation mode, otherwise only Index and Thumb
+              const shouldBeCyan = handIsRotating || ft.isCommand;
+              ctx.fillStyle = shouldBeCyan ? CONFIG.parentColor : CONFIG.monoBright;
+              ctx.shadowBlur = 10;
+              ctx.shadowColor = shouldBeCyan ? CONFIG.parentGlow : 'rgba(255,255,255,0.4)';
+              ctx.fill();
+              ctx.restore();
+            }
+          });
+        });
+      }
+    }
+
+    // =========================================================================
+    // RENDERING UTILITY FUNCTIONS
+    // =========================================================================
+    function drawNode(x, y, scale, name, opacity, isParent = false, cyanMorph = 0.0, hasChildren = true, isGrabbed = false) {
+      const baseRadius = CONFIG.nodeRadius;
+      const r = baseRadius * scale;
+      if (r < 1) return;
+
+      ctx.save();
+      
+      // Determine coloring
+      let fillStyle = CONFIG.monoBright;
+      let strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      let shadowColor = 'rgba(255, 255, 255, 0.2)';
+      let shadowBlur = 8;
+
+      if (isParent) {
+        fillStyle = CONFIG.parentColor;
+        strokeStyle = 'rgba(0, 240, 255, 0.3)';
+        shadowColor = CONFIG.parentGlow;
+      } else if (isGrabbed) {
+        fillStyle = CONFIG.parentColor;
+        strokeStyle = CONFIG.parentColor;
+        shadowColor = 'rgba(0, 240, 255, 0.85)';
+        shadowBlur = 15;
+      } else if (!hasChildren) {
+        fillStyle = 'rgba(2, 2, 4, 0.75)'; // Transparent/dark fill
+        strokeStyle = CONFIG.parentColor;  // Cyan outline
+        shadowColor = CONFIG.parentGlow;   // Cyan glow
+      } else if (cyanMorph > 0.001) {
+        // Handle color morphing during transitions
+        const rVal = Math.round(255 * (1 - cyanMorph));
+        const gVal = Math.round(255 * (1 - cyanMorph) + 240 * cyanMorph);
+        const bVal = 255; // both have 255
+        fillStyle = `rgb(${rVal}, ${gVal}, ${bVal})`;
+        strokeStyle = `rgba(${rVal}, ${gVal}, ${bVal}, 0.3)`;
+        shadowColor = `rgba(${rVal}, ${gVal}, ${bVal}, ${0.2 + cyanMorph * 0.25})`;
+      }
+
+      ctx.globalAlpha = opacity;
+
+      // Draw outer halo ring
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.7, 0, 2 * Math.PI);
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = isGrabbed ? 1.8 : 1.2;
+      ctx.stroke();
+
+      // Draw extra cybernetic tracker ring if grabbed
+      if (isGrabbed) {
+        ctx.beginPath();
+        ctx.arc(x, y, r * 2.2, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(0, 240, 255, 0.6)';
+        ctx.lineWidth = 1.0;
+        ctx.setLineDash([3, 4]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Draw center node sphere
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, 2 * Math.PI);
+      ctx.fillStyle = fillStyle;
+      ctx.shadowBlur = shadowBlur;
+      ctx.shadowColor = shadowColor;
+      ctx.fill();
+
+      // Draw outline for leaf center sphere
+      if (!isParent && !hasChildren && !isGrabbed) {
+        ctx.strokeStyle = CONFIG.parentColor;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+
+      // Draw labels (only if size is reasonable)
+      if (scale > 0.35 && opacity > 0.12) {
+        ctx.save();
+        const labelSize = isParent ? 15 : (hasChildren ? 13 : 13);
+        ctx.font = isParent
+          ? `bold ${labelSize}px 'Share Tech Mono', monospace`
+          : `${labelSize}px 'Share Tech Mono', monospace`;
+        ctx.fillStyle = (!isParent && !hasChildren) ? CONFIG.parentColor : (isParent ? CONFIG.parentColor : CONFIG.monoBright);
+        ctx.globalAlpha = opacity;
+        ctx.textAlign = 'center';
+        ctx.shadowBlur = (isParent || !hasChildren || isGrabbed) ? 6 : 0;
+        ctx.shadowColor = CONFIG.parentGlow;
+        // Wrap long names across two lines if needed
+        const words = name.toUpperCase().split(' ');
+        if (words.length > 2) {
+          const mid = Math.ceil(words.length / 2);
+          const line1 = words.slice(0, mid).join(' ');
+          const line2 = words.slice(mid).join(' ');
+          const lineH = labelSize + 3;
+          ctx.fillText(line1, x, y - r * 1.9 - lineH);
+          ctx.fillText(line2, x, y - r * 1.9);
+        } else {
+          ctx.fillText(name.toUpperCase(), x, y - r * 1.9 - 4);
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawLink(proj1, proj2, maxOpacity) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(proj1.x, proj1.y);
+      ctx.lineTo(proj2.x, proj2.y);
+      
+      // Calculate opacity based on node scales
+      const opacity = maxOpacity * Math.min(proj1.scale, proj2.scale);
+      
+      ctx.strokeStyle = `rgba(255, 255, 255, ${opacity.toFixed(3)})`;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawSelectionBox(x, y, scale) {
+      ctx.save();
+      ctx.strokeStyle = CONFIG.monoBright;
+      ctx.lineWidth = 1.2;
+      
+      const s = 24 * scale;
+      const l = s * 0.4; // Corner line length
+
+      // Draw animated dashed targeting brackets
+      // Top-Left
+      ctx.beginPath();
+      ctx.moveTo(x - s, y - s + l);
+      ctx.lineTo(x - s, y - s);
+      ctx.lineTo(x - s + l, y - s);
+      ctx.stroke();
+
+      // Top-Right
+      ctx.beginPath();
+      ctx.moveTo(x + s - l, y - s);
+      ctx.lineTo(x + s, y - s);
+      ctx.lineTo(x + s, y - s + l);
+      ctx.stroke();
+
+      // Bottom-Left
+      ctx.beginPath();
+      ctx.moveTo(x - s, y + s - l);
+      ctx.lineTo(x - s, y + s);
+      ctx.lineTo(x - s + l, y + s);
+      ctx.stroke();
+
+      // Bottom-Right
+      ctx.beginPath();
+      ctx.moveTo(x + s - l, y + s);
+      ctx.lineTo(x + s, y + s);
+      ctx.lineTo(x + s, y + s - l);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function drawBackgroundRadarGrid(width, height) {
+      const cx = width / 2;
+      const cy = height / 2;
+      
+      ctx.save();
+      ctx.strokeStyle = CONFIG.monoBgLine;
+      ctx.lineWidth = 0.8;
+
+      // Draw radial concentric radar circles
+      const orbits = [120, 240, 360, 480];
+      orbits.forEach(r => {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        ctx.stroke();
+      });
+
+      // Draw cross-hairs
+      ctx.beginPath();
+      ctx.moveTo(cx - 520, cy);
+      ctx.lineTo(cx + 520, cy);
+      ctx.moveTo(cx, cy - 400);
+      ctx.lineTo(cx, cy + 400);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // =========================================================================
+    // 7. MEDIAPIPE GESTURE & TRACKING INTERFACE
+    // =========================================================================
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    function countExtendedFingers(landmarks) {
+      let count = 0;
+      const wrist = landmarks[0];
+      if (!wrist) return 0;
+      
+      const isExtended = (tipIdx, jointIdx) => {
+        const tip = landmarks[tipIdx];
+        const joint = landmarks[jointIdx];
+        if (!tip || !joint) return false;
+        const dTip = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+        const dJoint = Math.hypot(joint.x - wrist.x, joint.y - wrist.y);
+        return dTip > dJoint * 1.12;
+      };
+
+      if (isExtended(8, 6)) count++;   // Index
+      if (isExtended(12, 10)) count++; // Middle
+      if (isExtended(16, 14)) count++; // Ring
+      if (isExtended(20, 18)) count++; // Pinky
+
+      const thumbTip = landmarks[4];
+      const thumbIP = landmarks[3];
+      if (thumbTip && thumbIP) {
+        const dTip = Math.hypot(thumbTip.x - wrist.x, thumbTip.y - wrist.y);
+        const dIP = Math.hypot(thumbIP.x - wrist.x, thumbIP.y - wrist.y);
+        if (dTip > dIP * 1.05) count++;
+      }
+      
+      return count;
+    }
+
+    function is5FingerPinch(landmarks) {
+      if (!landmarks) return false;
+      const wrist = landmarks[0];
+      const middleBase = landmarks[9];
+      if (!wrist || !middleBase) return false;
+
+      const hdx = wrist.x - middleBase.x;
+      const hdy = wrist.y - middleBase.y;
+      let handSize = Math.sqrt(hdx * hdx + hdy * hdy);
+      if (handSize < 0.01) handSize = 0.01;
+
+      const thumb = landmarks[4];
+      const index = landmarks[8];
+      const middle = landmarks[12];
+      const ring = landmarks[16];
+      const pinky = landmarks[20];
+      
+      if (!thumb || !index || !middle || !ring || !pinky) return false;
+
+      // Calculate distance of all fingertips to the thumb, relative to hand size
+      const dIndex = Math.hypot(index.x - thumb.x, index.y - thumb.y) / handSize;
+      const dMiddle = Math.hypot(middle.x - thumb.x, middle.y - thumb.y) / handSize;
+      const dRing = Math.hypot(ring.x - thumb.x, ring.y - thumb.y) / handSize;
+      const dPinky = Math.hypot(pinky.x - thumb.x, pinky.y - thumb.y) / handSize;
+
+      // In a 5-finger pinch, all fingertips must be clustered close to the thumb.
+      // We set a threshold of 0.55 relative to hand size, which easily filters out
+      // any extended fingers (which are typically > 0.8 to 1.2 in distance).
+      const maxDist = Math.max(dIndex, dMiddle, dRing, dPinky);
+      return maxDist < 0.55;
+    }
+
+    function isPalmFacing(landmarks, handedness) {
+      if (!landmarks || landmarks.length < 21) return false;
+      const w = landmarks[0];
+      const m = landmarks[9];
+      const idx = landmarks[5];
+      const p = landmarks[17];
+      
+      if (!w || !m || !idx || !p) return false;
+
+      // Vector from Wrist (0) to Middle Finger Base (9)
+      const ux = m.x - w.x;
+      const uy = m.y - w.y;
+
+      // Vector from Index Finger Base (5) to Pinky Finger Base (17)
+      const vx = p.x - idx.x;
+      const vy = p.y - idx.y;
+
+      // 2D cross product
+      const cross = ux * vy - uy * vx;
+
+      // Filter out hands that are viewed from the back
+      // Using a small threshold (0.005) to avoid noise at perpendicular/karate chop angles
+      if (handedness === "Right") {
+        return cross > 0.005;
+      } else {
+        return cross < -0.005;
+      }
+    }
+
+    hands.onResults((results) => {
+      let leftHand = null;
+      let rightHand = null;
+
+      const activeLandmarks = [];
+      const activeHandedness = [];
+      
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+          const landmarks = results.multiHandLandmarks[i];
+          const handedness = results.multiHandedness[i].label; // "Left" or "Right"
+          if (isPalmFacing(landmarks, handedness)) {
+            activeLandmarks.push(landmarks);
+            activeHandedness.push(results.multiHandedness[i]);
+          }
+        }
+      }
+
+      if (activeLandmarks.length > 0) {
+        isHandPresent = true;
+        trackedHands = activeLandmarks;
+        if (trackingStatusEl) {
+          trackingStatusEl.textContent = `TRACKING ACTIVE (${activeLandmarks.length} H)`;
+          trackingStatusEl.style.color = CONFIG.parentColor;
+        }
+
+        for (let i = 0; i < activeLandmarks.length; i++) {
+          const landmarks = activeLandmarks[i];
+          const handedness = activeHandedness[i].label;
+          
+          if (handedness === "Left") {
+            leftHand = landmarks;
+          } else if (handedness === "Right") {
+            rightHand = landmarks;
+          }
+        }
+      } else {
+        isHandPresent = false;
+        rightHandPresent = false;
+        leftHand = null;
+        rightHand = null;
+        trackedHands = [];
+        leftGestureLocked = false;
+        rightGestureLocked = false;
+        isRotationActive = false;
+        grabbedNodeIndex = -1;
+        grabbedHandType = null;
+        if (trackingStatusEl) {
+          trackingStatusEl.textContent = "NO HANDS";
+          trackingStatusEl.style.color = "rgba(255,255,255,0.4)";
+        }
+        if (leftPinchValueEl) leftPinchValueEl.textContent = "0.00";
+        if (rightPinchValueEl) rightPinchValueEl.textContent = "0.00";
+        if (rotationModeEl) {
+          rotationModeEl.textContent = "LOCKED";
+          rotationModeEl.style.color = "rgba(255,255,255,0.4)";
+        }
+        if (activeGestureNameEl) {
+          activeGestureNameEl.textContent = "NONE";
+          activeGestureNameEl.className = "tel-val gesture-indicator";
+        }
+      }
+
+      rightHandPresent = !!rightHand;
+
+      // Handle node dragging/grabbing
+      handleNodeDragging(leftHand, rightHand);
+
+      // Check if either hand is performing 5-finger pinch to rotate
+      let rotationHand = null;
+      if (grabbedNodeIndex === -1) {
+        if (leftHand && is5FingerPinch(leftHand)) {
+          rotationHand = leftHand;
+        } else if (rightHand && is5FingerPinch(rightHand)) {
+          rotationHand = rightHand;
+        }
+      }
+
+      if (rotationHand) {
+        isRotationActive = true;
+        if (rotationModeEl) {
+          rotationModeEl.textContent = "ACTIVE";
+          rotationModeEl.style.color = CONFIG.parentColor;
+        }
+        
+        const index = rotationHand[8];
+        if (index) {
+          const screenPos = landmarkToScreen(index, window.innerWidth, window.innerHeight);
+          pointerTargetX = screenPos.x;
+          pointerTargetY = screenPos.y;
+          targetRotateY = ((screenPos.x / window.innerWidth) - 0.5) * Math.PI * 2.2;
+          targetRotateX = ((screenPos.y / window.innerHeight) - 0.5) * -Math.PI * 1.2;
+        }
+      } else {
+        isRotationActive = false;
+        if (rotationModeEl) {
+          rotationModeEl.textContent = "LOCKED";
+          rotationModeEl.style.color = "rgba(255,255,255,0.4)";
+        }
+      }
+
+      // Selector strictly follows the right hand if present
+      if (!isRotationActive && grabbedNodeIndex === -1) {
+        if (rightHand) {
+          const index = rightHand[8];
+          if (index) {
+            const screenPos = landmarkToScreen(index, window.innerWidth, window.innerHeight);
+            pointerTargetX = screenPos.x;
+            pointerTargetY = screenPos.y;
+          }
+        }
+      }
+
+      landmarksData = rightHand || leftHand;
+
+      const now = Date.now();
+      const cooldownRemaining = now - lastZoomTime;
+      const canZoom = cooldownRemaining > CONFIG.zoomCooldownDuration && !isTransitioning && !isRotationActive && grabbedNodeIndex === -1 && !isExpandedMode;
+
+      let gestureName = "POINTER";
+      if (grabbedNodeIndex !== -1) {
+        gestureName = `${grabbedHandType.toUpperCase()} DRAG`;
+      }
+
+      // Check for Diamond Portal Gesture (both hands present)
+      if (leftHand && rightHand) {
+        const leftWrist = leftHand[0];
+        const leftMiddleBase = leftHand[9];
+        const rightWrist = rightHand[0];
+        const rightMiddleBase = rightHand[9];
+
+        if (leftWrist && leftMiddleBase && rightWrist && rightMiddleBase) {
+          const lhdx = leftWrist.x - leftMiddleBase.x;
+          const lhdy = leftWrist.y - leftMiddleBase.y;
+          const leftHandSize = Math.sqrt(lhdx * lhdx + lhdy * lhdy);
+
+          const rhdx = rightWrist.x - rightMiddleBase.x;
+          const rhdy = rightWrist.y - rightMiddleBase.y;
+          const rightHandSize = Math.sqrt(rhdx * rhdx + rhdy * rhdy);
+
+          const avgHandSize = (leftHandSize + rightHandSize) / 2;
+
+          const leftIndexTip = leftHand[8];
+          const rightIndexTip = rightHand[8];
+          const leftThumbTip = leftHand[4];
+          const rightThumbTip = rightHand[4];
+
+          if (leftIndexTip && rightIndexTip && leftThumbTip && rightThumbTip) {
+            const dIndexIndex = Math.hypot(leftIndexTip.x - rightIndexTip.x, leftIndexTip.y - rightIndexTip.y) / avgHandSize;
+            const dThumbThumb = Math.hypot(leftThumbTip.x - rightThumbTip.x, leftThumbTip.y - rightThumbTip.y) / avgHandSize;
+
+            const dLeftIndexThumb = Math.hypot(leftIndexTip.x - leftThumbTip.x, leftIndexTip.y - leftThumbTip.y) / leftHandSize;
+            const dRightIndexThumb = Math.hypot(rightIndexTip.x - rightThumbTip.x, rightIndexTip.y - rightThumbTip.y) / rightHandSize;
+
+            const indexIndexTouch = dIndexIndex < 0.28;
+            const thumbThumbTouch = dThumbThumb < 0.28;
+            const leftOpen = dLeftIndexThumb > 0.45;
+            const rightOpen = dRightIndexThumb > 0.45;
+
+            if (indexIndexTouch && thumbThumbTouch && leftOpen && rightOpen) {
+              const nowCheck = Date.now();
+              if (nowCheck - lastPortalToggleTime > portalToggleCooldown) {
+                isExpandedMode = !isExpandedMode;
+                lastPortalToggleTime = nowCheck;
+                showToast(isExpandedMode ? "PORTAL ACTIVE: FULL FLATTENED GEOMETRY" : "PORTAL CLOSED: HIERARCHICAL COGNITION");
+                grabbedNodeIndex = -1;
+                grabbedHandType = null;
+                selectedChildIndex = -1;
+                updatePathUI();
+              }
+              gestureName = "PORTAL DIAMOND";
+            }
+          }
+        }
+      }
+
+      // ----------------------------------------------------
+      // LEFT HAND: ZOOM OUT (EXIT)
+      // ----------------------------------------------------
+      if (leftHand) {
+        const wrist = leftHand[0];
+        const middleBase = leftHand[9];
+        const thumb = leftHand[4];
+        const index = leftHand[8];
+
+        if (wrist && middleBase && thumb && index) {
+          const hdx = wrist.x - middleBase.x;
+          const hdy = wrist.y - middleBase.y;
+          let handSize = Math.sqrt(hdx * hdx + hdy * hdy);
+          if (handSize < 0.01) handSize = 0.01;
+
+          const dx = thumb.x - index.x;
+          const dy = thumb.y - index.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const ratio = dist / handSize;
+
+          if (leftPinchValueEl) leftPinchValueEl.textContent = ratio.toFixed(2);
+
+          // Reset lock in neutral zone
+          if (ratio > CONFIG.neutralMinRatio && ratio < CONFIG.neutralMaxRatio) {
+            leftGestureLocked = false;
+          }
+
+          if (canZoom && !leftGestureLocked && ratio < CONFIG.pinchRatioThreshold) {
+            leftGestureLocked = true;
+            zoomOutNode();
+            gestureName = "LEFT PINCH (EXIT)";
+          }
+        }
+      } else {
+        if (leftPinchValueEl) leftPinchValueEl.textContent = "0.00";
+        leftGestureLocked = false;
+      }
+
+      // ----------------------------------------------------
+      // RIGHT HAND: ZOOM IN (ENTER)
+      // ----------------------------------------------------
+      if (rightHand) {
+        const wrist = rightHand[0];
+        const middleBase = rightHand[9];
+        const thumb = rightHand[4];
+        const index = rightHand[8];
+
+        if (wrist && middleBase && thumb && index) {
+          const hdx = wrist.x - middleBase.x;
+          const hdy = wrist.y - middleBase.y;
+          let handSize = Math.sqrt(hdx * hdx + hdy * hdy);
+          if (handSize < 0.01) handSize = 0.01;
+
+          const dx = thumb.x - index.x;
+          const dy = thumb.y - index.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const ratio = dist / handSize;
+
+          if (rightPinchValueEl) rightPinchValueEl.textContent = ratio.toFixed(2);
+
+          // Reset lock in neutral zone
+          if (ratio > CONFIG.neutralMinRatio && ratio < CONFIG.neutralMaxRatio) {
+            rightGestureLocked = false;
+          }
+
+          if (canZoom && !rightGestureLocked && ratio < CONFIG.pinchRatioThreshold && selectedChildIndex !== -1) {
+            rightGestureLocked = true;
+            zoomInToNode();
+            gestureName = "RIGHT PINCH (ENTER)";
+          }
+        }
+      } else {
+        if (rightPinchValueEl) rightPinchValueEl.textContent = "0.00";
+        rightGestureLocked = false;
+      }
+
+      // Update gesture display
+      if (activeGestureNameEl) {
+        if (gestureName !== "POINTER") {
+          activeGestureNameEl.textContent = gestureName;
+          activeGestureNameEl.className = "tel-val gesture-indicator active";
+        } else {
+          if (leftGestureLocked || rightGestureLocked) {
+            activeGestureNameEl.textContent = "RELEASE PINCH";
+            activeGestureNameEl.className = "tel-val gesture-indicator";
+          } else if (canZoom) {
+            activeGestureNameEl.textContent = isRotationActive ? "ROTATION MODE" : "POINTER";
+            activeGestureNameEl.className = "tel-val gesture-indicator";
+          } else {
+            activeGestureNameEl.textContent = "COOLDOWN";
+            activeGestureNameEl.className = "tel-val gesture-indicator";
+          }
+        }
+      }
+    });
+
+    // =========================================================================
+    // 8. INITIALIZE WEBCAM & LAUNCH
+    // =========================================================================
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await hands.send({ image: video });
+      },
+      width: 640,
+      height: 480
+    });
+
+    camera.start()
+      .then(() => {
+        loaderStatus.textContent = "CALIBRATING HUD SYSTEMS...";
+        setTimeout(() => {
+          loader.classList.add('fade-out');
+        }, 1000);
+      })
+      .catch(err => {
+        console.warn("Webcam not available:", err);
+        loaderStatus.textContent = "WEBCAM OFFLINE - DEMO EMULATOR INITIALIZED";
+        toast.classList.add('show');
+        setTimeout(() => { toast.classList.remove('show'); }, 6000);
+        
+        setTimeout(() => {
+          loader.classList.add('fade-out');
+        }, 1500);
+      });
+
+    // Initial Path UI Load
+    currentNode = treeData;
+    initFlatNodes(treeData);
+    currentChildrenPositions = getChildrenPositions(currentNode);
+    updatePathUI();
+    
+    // Launch main animation loop
+    drawHUD();
+  </script>
+</body>
+</html>

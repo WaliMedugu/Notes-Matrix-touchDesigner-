@@ -1,0 +1,9 @@
+@echo off
+title Thoughts Matrix v2 HUD Server
+echo Starting local web server for thoughts matrix v2...
+start cmd /k "python serve.py"
+echo Waiting for server to initialize...
+timeout /t 2 >nul
+echo Opening default web browser...
+start http://localhost:8001/
+exit
